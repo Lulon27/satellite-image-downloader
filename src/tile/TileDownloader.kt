@@ -104,23 +104,25 @@ object TileDownloader
             val downloadY = (current.y % maxTiles + maxTiles) % maxTiles
             if (TileCache.getTile(downloadX, downloadY, z) == null)
             {
-                val newTile = tileFactory.createTile()
-                var error: Throwable? = null
+                GlobalScope.launch {
+                    val newTile = tileFactory.createTile()
+                    var error: Throwable? = null
 
-                NetUtil.downloadTileImage(URL(CollectionHandler.formatURL(downloadURL!!, downloadX, downloadY, z)), {
-                    newTile.readTile(it)
-                }, {
-                    error = it
-                })
+                    NetUtil.downloadTileImage(URL(CollectionHandler.formatURL(downloadURL!!, downloadX, downloadY, z)), {
+                        newTile.readTile(it)
+                    }, {
+                        error = it
+                    })
 
-                if(error == null && newTile.tileImage != null)
-                {
-                    println("Downloaded tile ($downloadX | $downloadY)")
-                    TileCache.putTile(downloadX, downloadY, z, newTile)
-                }
-                else
-                {
-                    println("Failed to download tile ($error)")
+                    if(error == null && newTile.tileImage != null)
+                    {
+                        println("Downloaded tile ($downloadX | $downloadY)")
+                        TileCache.putTile(downloadX, downloadY, z, newTile)
+                    }
+                    else
+                    {
+                        println("Failed to download tile ($error)")
+                    }
                 }
                 downloadedTile = true
             }
