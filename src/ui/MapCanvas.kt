@@ -37,6 +37,11 @@ class MapCanvas : Canvas()
     private var selectionTileX: Long = 0
     private var selectionTileY: Long = 0
 
+    private var selectionX1: Long = 0
+    private var selectionY1: Long = 0
+    private var selectionX2: Long = 0
+    private var selectionY2: Long = 0
+
     private val renderer = TileLayerRenderer()
 
     val showGridProperty = SimpleBooleanProperty()
@@ -51,17 +56,28 @@ class MapCanvas : Canvas()
             if(selectionMode && it.isPrimaryButtonDown)
             {
                 val maxTiles = MapUtil.getNumTilesOnZ(selectionModeZoomLevel)
-                val xMod = (selectionTileX % maxTiles + maxTiles) % maxTiles
-                val yMod = (selectionTileY % maxTiles + maxTiles) % maxTiles
-                PersistentTileDownloader.downloadTile(xMod, yMod, selectionModeZoomLevel)
+                selectionX1 = (selectionTileX % maxTiles + maxTiles) % maxTiles
+                selectionY1 = (selectionTileY % maxTiles + maxTiles) % maxTiles
+                selectionX2 = selectionX1
+                selectionY2 = selectionY1
+                // PersistentTileDownloader.downloadTile(xMod, yMod, selectionModeZoomLevel)
             }
         }
 
         this.onMouseDragged = EventHandler {
+            mouseX = it.x
+            mouseY = it.y
             if(selectionMode && it.isPrimaryButtonDown)
             {
+                updateHoveredTile()
+                val maxTiles = MapUtil.getNumTilesOnZ(selectionModeZoomLevel)
+                selectionX2 = (selectionTileX % maxTiles + maxTiles) % maxTiles
+                selectionY2 = (selectionTileY % maxTiles + maxTiles) % maxTiles
+                println(selectionX2)
                 return@EventHandler
             }
+
+            // Pan camera
             val mouseMovedX = it.x - this.mouseXprev
             val mouseMovedY = it.y - this.mouseYprev
             this.mouseXprev = it.x
@@ -77,13 +93,36 @@ class MapCanvas : Canvas()
             mouseY = it.y
             if(selectionMode)
             {
-                val mouseXDiff = mouseX - width / 2
-                val mouseYDiff = mouseY - height / 2
-                val worldCoordsPerPixel = MapUtil.worldCoordsPerPixel(this.renderer.zoomLevel, (this.renderer.tileSizePx * this.renderer.tileScale).toInt())
-                val mouseXworld = this.renderer.posX + mouseXDiff * worldCoordsPerPixel
-                val mouseYworld = this.renderer.posY + mouseYDiff * worldCoordsPerPixel
-                selectionTileX = MapUtil.worldToTileCoords(mouseXworld, selectionModeZoomLevel)
-                selectionTileY = MapUtil.worldToTileCoords(mouseYworld, selectionModeZoomLevel)
+                updateHoveredTile()
+            }
+        }
+
+        this.onMouseReleased = EventHandler {
+            if(selectionMode && it.button == MouseButton.PRIMARY)
+            {
+                val min = Point(maxOf(minOf(selectionX1, selectionX2), 0), maxOf(minOf(selectionY1, selectionY2), 0))
+                val max = Point(minOf(maxOf(selectionX1, selectionX2), MapUtil.getNumTilesOnZ(selectionModeZoomLevel) - 1), minOf(maxOf(selectionY1, selectionY2), MapUtil.getNumTilesOnZ(selectionModeZoomLevel) - 1))
+                if((max.x - min.x) * (max.y - min.y) > 1000)
+                {
+                    selectionX2 = selectionX1
+                    selectionY2 = selectionY1
+                    return@EventHandler
+                }
+                val state = TileCache.getPersistentState(selectionX1, selectionY1, selectionModeZoomLevel)
+                for(x in min.x until max.x + 1)
+                {
+                    for(y in min.y until max.y + 1)
+                    {
+                        if(state == TileCache.PersistentState.NOT_PERSISTENT || state == TileCache.PersistentState.FAILED)
+                        {
+                            PersistentTileDownloader.downloadTile(x, y, selectionModeZoomLevel)
+                        }
+                        // else delete if deletion feature is added
+                    }
+                }
+                selectionX2 = selectionX1
+                selectionY2 = selectionY1
+                return@EventHandler
             }
         }
 
@@ -121,6 +160,17 @@ class MapCanvas : Canvas()
             }
         }
         (this.animTimer as AnimationTimer).start()
+    }
+
+    private fun updateHoveredTile()
+    {
+        val mouseXDiff = mouseX - width / 2
+        val mouseYDiff = mouseY - height / 2
+        val worldCoordsPerPixel = MapUtil.worldCoordsPerPixel(this.renderer.zoomLevel, (this.renderer.tileSizePx * this.renderer.tileScale).toInt())
+        val mouseXworld = this.renderer.posX + mouseXDiff * worldCoordsPerPixel
+        val mouseYworld = this.renderer.posY + mouseYDiff * worldCoordsPerPixel
+        selectionTileX = MapUtil.worldToTileCoords(mouseXworld, selectionModeZoomLevel)
+        selectionTileY = MapUtil.worldToTileCoords(mouseYworld, selectionModeZoomLevel)
     }
 
     private fun draw()
@@ -201,6 +251,36 @@ class MapCanvas : Canvas()
                 {
                     graphicsContext2D.fill = Color.color(1.0, 0.0, 0.0, 0.25)
                     graphicsContext2D.fillRect(x, y, width, height)
+                }
+            }
+
+            // Draw rectangular selection
+            if(selectionX1 != selectionX2 || selectionY1 != selectionY2)
+            {
+                val min = Point(maxOf(minOf(selectionX1, selectionX2), 0), maxOf(minOf(selectionY1, selectionY2), 0))
+                val max = Point(minOf(maxOf(selectionX1, selectionX2), MapUtil.getNumTilesOnZ(selectionModeZoomLevel) - 1), minOf(maxOf(selectionY1, selectionY2), MapUtil.getNumTilesOnZ(selectionModeZoomLevel) - 1))
+                renderer.drawTile(min.x, min.y) { x: Double, y: Double, width: Double, height: Double ->
+                    val selectionWidth = (max.x - min.x + 1)
+                    val selectionHeight = (max.y - min.y + 1)
+                    val rectWidth = width * selectionWidth
+                    val rectHeight = height * selectionHeight
+                    graphicsContext2D.fill = Color.color(1.0, 1.0, 0.75, 0.25)
+                    graphicsContext2D.fillRoundRect(x, y, rectWidth, rectHeight, 15.0, 15.0)
+                    graphicsContext2D.stroke = Color.color(0.0, 0.0, 0.0, 0.25)
+                    graphicsContext2D.strokeRoundRect(x, y, rectWidth, rectHeight, 15.0, 15.0)
+
+                    val str = "$selectionWidth x $selectionHeight"
+                    val font = Font(18.0)
+                    val text = Text(str)
+                    text.font = font
+                    text.wrappingWidth = 0.0
+                    text.lineSpacing = 0.0
+
+                    graphicsContext2D.fill = Color.color(0.0, 0.0, 0.0, 0.4)
+                    graphicsContext2D.font = font
+                    graphicsContext2D.textAlign = TextAlignment.CENTER
+                    graphicsContext2D.textBaseline = VPos.CENTER
+                    graphicsContext2D.fillText(str, x + rectWidth * 0.5, y + rectHeight * 0.5, rectWidth)
                 }
             }
 
